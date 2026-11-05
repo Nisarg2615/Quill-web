@@ -1,0 +1,20 @@
+# Python & environment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Sensitive credentials & environment variables
+.env
+.env.*
+!.env.example
+
+# State & outreach runtime files (don't push your lead status or recipient list to public repo)
+state.json
+suppression.txt
+leads.csv
+
+# Streamlit config/secrets
+.streamlit/secrets.toml
