@@ -196,12 +196,15 @@ if run_scrape:
             if enable_draft:
                 status_text.info(f"✍️ Step 4/4: Drafting personalized emails with Gemini AI...")
                 progress_bar.progress(85)
+                # Check if GEMINI_API_KEY is available
+                _load_env()
+                gemini_key = os.getenv("GEMINI_API_KEY")
+                if not gemini_key:
+                    st.warning("⚠️ No GEMINI_API_KEY found! Check your Streamlit Secrets. Using offline template.")
+
                 for l in scored_leads:
-                    if l["email"]:
-                        subj, bdy, src = draft(l, city_input)
-                        l["subject"], l["body"], l["draft_source"] = subj, bdy, src
-                    else:
-                        l["subject"], l["body"], l["draft_source"] = "", "", ""
+                    subj, bdy, src = draft(l, city_input)
+                    l["subject"], l["body"], l["draft_source"] = subj, bdy, src
 
             # Save to leads.csv
             cols = ["priority", "name", "niche", "need", "email", "phone", "website",

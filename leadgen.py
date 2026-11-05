@@ -27,6 +27,17 @@ import requests
 from bs4 import BeautifulSoup
 
 def _load_env():
+    # 1. First, check if Streamlit secrets exist (for Streamlit Community Cloud)
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            for k in ["GEMINI_API_KEY", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD", "CONTACT_EMAIL", "SENDER_NAME", "SENDER_TITLE", "PAGESPEED_API_KEY", "BREVO_API_KEY", "GEMINI_MODEL"]:
+                if k in st.secrets and k not in os.environ:
+                    os.environ[k] = str(st.secrets[k])
+    except Exception:
+        pass
+
+    # 2. Check local .env file
     env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.exists(env_file):
         with open(env_file, encoding="utf-8") as f:
