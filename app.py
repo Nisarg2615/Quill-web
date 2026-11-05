@@ -112,7 +112,7 @@ with st.sidebar:
     with st.expander("⚙️ Advanced Options"):
         custom_tag = st.text_input("Custom OSM Tag (optional):", placeholder="e.g. shop=florist")
         enable_pagespeed = st.checkbox("Google PageSpeed Score (Slows down audit)", value=False)
-        enable_draft = st.checkbox("Generate Personalized Drafts", value=True)
+        auto_draft_ai = st.checkbox("Auto-generate AI Drafts during audit (Uses Gemini quota)", value=False)
         worker_threads = st.slider("Audit Worker Threads:", 2, 12, 6)
 
     run_scrape = st.button("🔍 Find & Audit Leads", type="primary", use_container_width=True)
@@ -193,18 +193,18 @@ if run_scrape:
             else:
                 scored_leads.sort(key=lambda l: -l["priority"])
 
-            if enable_draft:
+            if auto_draft_ai:
                 status_text.info(f"✍️ Step 4/4: Drafting personalized emails with Gemini AI...")
                 progress_bar.progress(85)
-                # Check if GEMINI_API_KEY is available
                 _load_env()
-                gemini_key = os.getenv("GEMINI_API_KEY")
-                if not gemini_key:
-                    st.warning("⚠️ No GEMINI_API_KEY found! Check your Streamlit Secrets. Using offline template.")
-
                 for l in scored_leads:
                     subj, bdy, src = draft(l, city_input)
                     l["subject"], l["body"], l["draft_source"] = subj, bdy, src
+            else:
+                for l in scored_leads:
+                    l["subject"] = l.get("subject", "")
+                    l["body"] = l.get("body", "")
+                    l["draft_source"] = l.get("draft_source", "")
 
             # Save to leads.csv
             cols = ["priority", "name", "niche", "need", "email", "phone", "website",
@@ -315,9 +315,28 @@ else:
                     src = str(row.get("draft_source", "")).strip()
                     if src == "Gemini AI":
                         st.markdown('<span class="badge-gemini">🤖 Gemini AI</span>', unsafe_allow_html=True)
-                    elif src:
+                    elif src == "Offline Template":
                         st.markdown('<span class="badge-offline">📄 Offline Template</span>', unsafe_allow_html=True)
+                    else:
+                        st.caption("No draft generated")
+
                     st.caption(f"Priority Score: **{row['priority']}**")
+
+                    # On-demand AI draft generation button for this lead
+                    btn_label = "✨ Generate AI Draft" if not src else "🔄 Regenerate with AI"
+                    if st.button(btn_label, key=f"btn_draft_{idx}"):
+                        with st.spinner(f"Calling Gemini AI for {row['name']}..."):
+                            _load_env()
+                            lead_dict = row.to_dict()
+                            if isinstance(lead_dict.get("issues"), str):
+                                lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
+                            subj, bdy, d_src = draft(lead_dict, city_input)
+                            df.loc[df["name"] == row["name"], "subject"] = subj
+                            df.loc[df["name"] == row["name"], "body"] = bdy
+                            df.loc[df["name"] == row["name"], "draft_source"] = d_src
+                            save_leads_df(df)
+                        st.success(f"Generated via {d_src}!")
+                        st.rerun()
 
                 st.divider()
 
@@ -414,11 +433,29 @@ else:
             new_subject = st.text_input("Email Subject:", value=str(lead_row.get("subject", "")))
             new_body = st.text_area("Email Body:", value=str(lead_row.get("body", "")), height=350)
 
-            if st.button("💾 Save Changes to CSV", type="primary"):
-                df.loc[df["name"] == selected_lead_name, "subject"] = new_subject
-                df.loc[df["name"] == selected_lead_name, "body"] = new_body
-                save_leads_df(df)
-                st.success(f"Changes saved for {selected_lead_name}!")
+            btn_save_col, btn_ai_col = st.columns([1, 1])
+            with btn_save_col:
+                if st.button("💾 Save Changes to CSV", type="primary", use_container_width=True):
+                    df.loc[df["name"] == selected_lead_name, "subject"] = new_subject
+                    df.loc[df["name"] == selected_lead_name, "body"] = new_body
+                    save_leads_df(df)
+                    st.success(f"Changes saved for {selected_lead_name}!")
+                    st.rerun()
+
+            with btn_ai_col:
+                if st.button("✨ (Re)Generate Draft with Gemini AI", use_container_width=True):
+                    with st.spinner(f"Drafting personalized pitch for {selected_lead_name} with Gemini..."):
+                        _load_env()
+                        lead_dict = lead_row.to_dict()
+                        if isinstance(lead_dict.get("issues"), str):
+                            lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
+                        subj, bdy, d_src = draft(lead_dict, city_input)
+                        df.loc[df["name"] == selected_lead_name, "subject"] = subj
+                        df.loc[df["name"] == selected_lead_name, "body"] = bdy
+                        df.loc[df["name"] == selected_lead_name, "draft_source"] = d_src
+                        save_leads_df(df)
+                    st.success(f"Generated via {d_src}!")
+                    st.rerun()
 
     st.divider()
     # Download CSV Button
