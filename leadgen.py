@@ -312,13 +312,50 @@ def score(lead):
 def footer():
     sender = os.getenv("SENDER_NAME", "Quillweb Team")
     title = os.getenv("SENDER_TITLE", "Website Design & Optimization")
-    signature = f"{sender}\n{title}" if title else sender
+    signature = f"{sender}  \n{title}" if title else sender
     return (
         f"\n\nBest regards,\n\n"
         f"{signature}\n\n"
-        f"—\n"
+        f"—  \n"
         f"If website improvements aren't a priority right now, feel free to reply \"no\" and we will respect your inbox and not follow up."
     )
+
+
+def clean_body_markdown(text):
+    """
+    Standardizes email body formatting:
+    1. Ensures every bullet point starts with standard markdown '* **Heading:**' so they never squash together.
+    2. Splits any bullet points that Gemini squashed on a single line.
+    3. Guarantees line breaks in the signature.
+    """
+    lines = text.strip().split("\n")
+    cleaned = []
+    for line in lines:
+        stripped = line.strip()
+        # Handle squashed bullets on a single line (e.g. • A ... • B ...)
+        if stripped.count("•") > 1:
+            for p in stripped.split("•"):
+                p_str = p.strip()
+                if p_str:
+                    cleaned.append(f"* {p_str}")
+            continue
+        if stripped.count(" - ") > 1 and "**" in stripped:
+            for p in stripped.split(" - "):
+                p_str = p.strip()
+                if p_str:
+                    cleaned.append(f"* {p_str}")
+            continue
+
+        if re.match(r"^[•\*\-]\s*", stripped):
+            clean_item = re.sub(r"^[•\*\-]\s*", "", stripped)
+            cleaned.append(f"* {clean_item}")
+        elif re.match(r"^\*\*[A-Za-z\s]+:\*\*", stripped):
+            cleaned.append(f"* {stripped}")
+        elif stripped in ("—", "--", "-"):
+            cleaned.append("—  ")
+        else:
+            cleaned.append(line)
+    return "\n".join(cleaned)
 
 
 def get_niche_details(niche):
@@ -373,7 +410,7 @@ def template_draft(lead, city=""):
             f"Would you be open to having a quick conversation about this?"
         )
 
-    return subject, body + footer()
+    return subject, clean_body_markdown(body + footer())
 
 
 def gemini_draft(lead, city=""):
@@ -438,7 +475,7 @@ def gemini_draft(lead, city=""):
                             raw_text = raw_text.rstrip()[:-3]
                     raw_text = raw_text.strip()
                     data = json.loads(raw_text)
-                    return data["subject"], data["body"].strip() + footer()
+                    return data["subject"], clean_body_markdown(data["body"].strip() + footer())
                 elif r.status_code == 429:
                     print(f"  [Gemini] Model '{model}' quota reached (429), trying next candidate...")
                     break  # break inner attempt loop to try next model immediately

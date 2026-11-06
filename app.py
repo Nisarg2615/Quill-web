@@ -26,7 +26,8 @@ for _k in _EXPECTED_KEYS:
 # Load environment variables
 from leadgen import (
     _load_env, NICHES, geocode, fetch_businesses, parse_element,
-    audit_lead, score, load_suppression, suppressed, draft, is_social, norm_url
+    audit_lead, score, load_suppression, suppressed, draft, is_social, norm_url,
+    clean_body_markdown
 )
 import sender
 
@@ -400,7 +401,7 @@ else:
                     with st.expander(f"✉️ Preview Email: {curr_subj[:60]}..."):
                         st.markdown(f"**Subject:** {curr_subj}")
                         st.markdown("---")
-                        st.markdown(curr_body)
+                        st.markdown(clean_body_markdown(curr_body))
 
                 st.divider()
 
@@ -572,7 +573,14 @@ else:
 
             st.divider()
             new_subject = st.text_input("Email Subject:", value=str(lead_row.get("subject", "")))
-            new_body = st.text_area("Email Body:", value=str(lead_row.get("body", "")), height=350)
+            new_body = st.text_area("Email Body (Text Editor):", value=clean_body_markdown(str(lead_row.get("body", ""))), height=280)
+
+            # Live Rendered Preview
+            st.markdown("##### 👁️ Live Formatted Email Preview")
+            with st.container():
+                st.markdown(f"**Subject:** {new_subject}")
+                st.markdown("---")
+                st.markdown(clean_body_markdown(new_body))
 
             btn_save_col, btn_ai_col = st.columns([1, 1])
             with btn_save_col:
@@ -580,7 +588,7 @@ else:
                     df["subject"] = df["subject"].astype(str)
                     df["body"] = df["body"].astype(str)
                     df.loc[df["name"] == selected_lead_name, "subject"] = str(new_subject)
-                    df.loc[df["name"] == selected_lead_name, "body"] = str(new_body)
+                    df.loc[df["name"] == selected_lead_name, "body"] = clean_body_markdown(str(new_body))
                     save_leads_df(df)
                     st.success(f"Changes saved for {selected_lead_name}!")
                     st.rerun()
@@ -595,11 +603,12 @@ else:
                             if isinstance(lead_dict.get("issues"), str):
                                 lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
                             subj, bdy, d_src = draft(lead_dict, city_input)
+                            clean_bdy = clean_body_markdown(bdy)
                             df["subject"] = df["subject"].astype(str)
                             df["body"] = df["body"].astype(str)
                             df["draft_source"] = df["draft_source"].astype(str)
                             df.loc[df["name"] == selected_lead_name, "subject"] = str(subj)
-                            df.loc[df["name"] == selected_lead_name, "body"] = str(bdy)
+                            df.loc[df["name"] == selected_lead_name, "body"] = str(clean_bdy)
                             df.loc[df["name"] == selected_lead_name, "draft_source"] = str(d_src)
                             save_leads_df(df)
                         st.success(f"✅ Generated via {d_src}!")

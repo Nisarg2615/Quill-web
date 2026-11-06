@@ -175,13 +175,44 @@ def get_outreach_calendar(state, daily_cap=30, ramp_step=5, initial_cap=5, lookb
 def footer():
     sender = os.getenv("SENDER_NAME", "Quillweb Team")
     title = os.getenv("SENDER_TITLE", "Website Design & Optimization")
-    signature = f"{sender}\n{title}" if title else sender
+    signature = f"{sender}  \n{title}" if title else sender
     return (
         f"\n\nBest regards,\n\n"
         f"{signature}\n\n"
-        f"—\n"
+        f"—  \n"
         f"If website improvements aren't a priority right now, feel free to reply \"no\" and we will respect your inbox and not follow up."
     )
+
+
+def clean_body_markdown(text):
+    """Standardizes email body formatting so bullets and signatures never squash together."""
+    lines = text.strip().split("\n")
+    cleaned = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.count("•") > 1:
+            for p in stripped.split("•"):
+                p_str = p.strip()
+                if p_str:
+                    cleaned.append(f"* {p_str}")
+            continue
+        if stripped.count(" - ") > 1 and "**" in stripped:
+            for p in stripped.split(" - "):
+                p_str = p.strip()
+                if p_str:
+                    cleaned.append(f"* {p_str}")
+            continue
+
+        if re.match(r"^[•\*\-]\s*", stripped):
+            clean_item = re.sub(r"^[•\*\-]\s*", "", stripped)
+            cleaned.append(f"* {clean_item}")
+        elif re.match(r"^\*\*[A-Za-z\s]+:\*\*", stripped):
+            cleaned.append(f"* {stripped}")
+        elif stripped in ("—", "--", "-"):
+            cleaned.append("—  ")
+        else:
+            cleaned.append(line)
+    return "\n".join(cleaned)
 
 
 def followup_body(stage, name):
@@ -197,14 +228,14 @@ def followup_body(stage, name):
                 f"If you ever do want to explore ways to turn more local online searches into customers, feel free to reach "
                 f"out anytime.\n\n"
                 f"Wishing you and {name} all the best!")
-    return body + footer()
-    return body + footer()
+    return clean_body_markdown(body + footer())
 
 
 def body_to_plain(text):
     """Strip markdown asterisks while keeping clean readable unicode bullets."""
+    clean_text = clean_body_markdown(text)
     lines = []
-    for line in text.split("\n"):
+    for line in clean_text.split("\n"):
         stripped = line.strip()
         # Clean leading markdown bullets like * or - to a neat unicode bullet •
         if re.match(r"^[\*\-]\s+", stripped):
@@ -218,7 +249,8 @@ def body_to_plain(text):
 
 def body_to_html(text):
     """Convert email body with markdown formatting into clean professional HTML."""
-    paragraphs = text.strip().split("\n\n")
+    clean_text = clean_body_markdown(text)
+    paragraphs = clean_text.strip().split("\n\n")
     html_parts = []
     for p in paragraphs:
         p = p.strip()
