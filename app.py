@@ -25,13 +25,17 @@ for _k in _EXPECTED_KEYS:
     except Exception:
         pass
 
-# Load environment variables
+import importlib
+import leadgen
+import sender
+importlib.reload(leadgen)
+importlib.reload(sender)
+
 from leadgen import (
     _load_env, NICHES, geocode, fetch_businesses, parse_element,
     audit_lead, score, load_suppression, suppressed, draft, is_social, norm_url,
     clean_body_markdown
 )
-import sender
 
 _load_env()
 
@@ -628,14 +632,22 @@ else:
 
             # Live Rendered Email Preview (Exact recipient view with styling, bullets & mockup)
             st.markdown("##### 👁️ Live Formatted Email Preview (Exact Recipient View)")
-            clean_preview_body = clean_body_markdown(new_body)
+            clean_preview_body = clean_body_markdown(str(new_body or ""))
             preview_img = str(df.loc[df["name"] == selected_lead_name, "image_path"].iloc[0]).strip()
-            has_preview_img = preview_img and preview_img != "nan" and os.path.exists(preview_img)
-            html_preview = sender.body_to_html(
-                clean_preview_body,
-                image_path=preview_img if has_preview_img else None,
-                lead_name=selected_lead_name
-            )
+            has_preview_img = bool(preview_img and preview_img != "nan" and os.path.exists(preview_img))
+            try:
+                html_preview = sender.body_to_html(
+                    clean_preview_body,
+                    image_path=preview_img if has_preview_img else None,
+                    lead_name=str(selected_lead_name)
+                )
+            except Exception:
+                import importlib
+                importlib.reload(sender)
+                try:
+                    html_preview = sender.body_to_html(clean_preview_body)
+                except Exception:
+                    html_preview = f"<pre style='font-family: inherit;'>{clean_preview_body}</pre>"
             components.html(html_preview, height=450, scrolling=True)
 
             btn_save_col, btn_ai_col = st.columns([1, 1])

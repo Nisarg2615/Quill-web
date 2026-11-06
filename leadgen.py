@@ -424,6 +424,9 @@ def clean_body_markdown(text):
     3. Guarantees line breaks in the signature so 'Quillweb Team' and 'Website Design' never merge.
     4. Ensures clean opt-out footer.
     """
+    if text is None:
+        return ""
+    text = str(text)
     text = re.sub(r"(Quillweb Team)\s*\n\s*(Website Design)", r"\1  \n\2", text)
     lines = text.strip().split("\n")
     cleaned = []

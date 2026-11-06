@@ -192,6 +192,9 @@ def clean_body_markdown(text):
     3. Guarantees clean hard line breaks in the signature so 'Quillweb Team' and 'Website Design' never merge.
     4. Ensures clean opt-out footer.
     """
+    if text is None:
+        return ""
+    text = str(text)
     text = re.sub(r"(Quillweb Team)\s*\n\s*(Website Design)", r"\1  \n\2", text)
     lines = text.strip().split("\n")
     cleaned = []
@@ -241,6 +244,9 @@ def followup_body(stage, name):
 
 def body_to_plain(text, has_image=False):
     """Strip all markdown asterisks and format clean unicode bullets with zero raw asterisks."""
+    if text is None:
+        return ""
+    text = str(text)
     clean_text = clean_body_markdown(text)
     out = []
     for line in clean_text.split("\n"):
@@ -262,12 +268,19 @@ def body_to_plain(text, has_image=False):
     return result
 
 
-def body_to_html(text, image_path=None, lead_name=""):
+def body_to_html(text, *args, **kwargs):
     """
     Convert email body with markdown formatting into clean, professional HTML.
     Groups list items into <ul><li>, bolds headings with <strong>, cleanly separates
     the signature, and embeds inline mockup cards when an image is attached.
     """
+    if text is None:
+        text = ""
+    text = str(text)
+    image_path = kwargs.get("image_path") or (args[0] if len(args) > 0 else None)
+    lead_name = kwargs.get("lead_name") or (args[1] if len(args) > 1 else "")
+    lead_name = str(lead_name) if lead_name and lead_name != "nan" else ""
+
     clean_text = clean_body_markdown(text)
     paragraphs = clean_text.strip().split("\n\n")
     html_parts = []
@@ -371,8 +384,12 @@ def get_smtp_connection():
     return smtp
 
 
-def build_message(to, subject, body, in_reply_to=None, references=None, image_path=None, name=""):
+def build_message(to, subject, body, in_reply_to=None, references=None, *args, **kwargs):
     from_email = os.getenv("SMTP_FROM_EMAIL") or os.getenv("SMTP_USER") or os.environ.get("GMAIL_ADDRESS")
+    image_path = kwargs.get("image_path") or (args[0] if len(args) > 0 else None)
+    name = kwargs.get("name") or (args[1] if len(args) > 1 else "")
+    name = str(name) if name and name != "nan" else ""
+
     m = EmailMessage()
     m["From"] = formataddr((os.getenv("SENDER_NAME", ""), from_email))
     m["To"] = to
