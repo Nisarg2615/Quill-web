@@ -97,6 +97,8 @@ def load_leads_df(filepath="leads.csv"):
 
 def save_leads_df(df, filepath="leads.csv"):
     df.to_csv(filepath, index=False, encoding="utf-8")
+    # Also keep in session state so the UI always reflects latest data without disk read
+    st.session_state["leads_df"] = df.copy()
 
 
 def get_maps_url(row):
@@ -260,7 +262,15 @@ if run_scrape:
 # --- Main Dashboard ---
 st.header("📊 Lead Intelligence & Outreach Dashboard")
 
-df = load_leads_df()
+# Use session_state as source of truth so button updates show immediately on rerun
+if "leads_df" not in st.session_state:
+    st.session_state["leads_df"] = load_leads_df()
+# Always sync from disk if session just started or CSV is newer (e.g. after scrape)
+_disk_df = load_leads_df()
+if not _disk_df.empty and (st.session_state["leads_df"].empty or len(_disk_df) != len(st.session_state["leads_df"])):
+    st.session_state["leads_df"] = _disk_df
+
+df = st.session_state["leads_df"]
 
 if df.empty:
     st.info("👋 No leads generated yet. Use the sidebar on the left to start your first search!")
@@ -357,24 +367,24 @@ else:
                     # On-demand AI draft generation button for this lead
                     btn_label = "✨ Generate AI Draft" if not src else "🔄 Regenerate with AI"
                     if st.button(btn_label, key=f"btn_draft_{idx}"):
-                        with st.spinner(f"Calling Gemini AI for {row['name']}..."):
-                            lead_dict = row.to_dict()
-                            if isinstance(lead_dict.get("issues"), str):
-                                lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
-                            # Verify key is present before calling
-                            if not os.environ.get("GEMINI_API_KEY"):
-                                st.error("❌ GEMINI_API_KEY not found! Please add it to Streamlit Secrets (Settings → Secrets).")
-                            else:
+                        if not os.environ.get("GEMINI_API_KEY"):
+                            st.error("❌ GEMINI_API_KEY not found in Streamlit Secrets!")
+                        else:
+                            with st.spinner(f"Calling Gemini AI for {row['name']}..."):
+                                lead_dict = row.to_dict()
+                                if isinstance(lead_dict.get("issues"), str):
+                                    lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
                                 subj, bdy, d_src = draft(lead_dict, city_input)
-                                df["subject"] = df["subject"].astype(str)
-                                df["body"] = df["body"].astype(str)
-                                df["draft_source"] = df["draft_source"].astype(str)
-                                df.loc[df["name"] == row["name"], "subject"] = str(subj)
-                                df.loc[df["name"] == row["name"], "body"] = str(bdy)
-                                df.loc[df["name"] == row["name"], "draft_source"] = str(d_src)
-                                save_leads_df(df)
-                                st.success(f"✅ Generated via {d_src}!")
-                                st.rerun()
+                            # Update session state df directly — instant, no disk-read race condition
+                            df["subject"] = df["subject"].astype(str)
+                            df["body"] = df["body"].astype(str)
+                            df["draft_source"] = df["draft_source"].astype(str)
+                            df.loc[df["name"] == row["name"], "subject"] = str(subj)
+                            df.loc[df["name"] == row["name"], "body"] = str(bdy)
+                            df.loc[df["name"] == row["name"], "draft_source"] = str(d_src)
+                            save_leads_df(df)  # saves to disk AND session_state
+                            st.success(f"✅ Generated via **{d_src}** for {row['name']}!")
+                            st.rerun()
 
                 st.divider()
 

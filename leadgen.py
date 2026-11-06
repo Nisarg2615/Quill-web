@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
 """
+#!/usr/bin/env python3
 leadgen.py - free lead-gen pipeline for a website-design service.
 
 Stages:
@@ -422,14 +422,16 @@ def gemini_draft(lead, city=""):
                 json={"contents": [{"parts": [{"text": prompt}]}],
                       "generationConfig": {"responseMimeType": "application/json"}})
             if r.status_code == 200:
-                raw_text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-                # Strip markdown code fences if Gemini wraps in ```json ... ```
-                raw_text = raw_text.strip()
+                raw_text = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                # Robustly strip markdown code fences: ```json ... ``` or ``` ... ```
                 if raw_text.startswith("```"):
-                    raw_text = raw_text.split("```", 2)[-1]  # strip opening fence + lang tag
-                    if "```" in raw_text:
-                        raw_text = raw_text[:raw_text.rfind("```")]
-                data = json.loads(raw_text.strip())
+                    # Remove the opening fence line (e.g. ```json\n or ```\n)
+                    raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
+                    # Remove the closing fence
+                    if raw_text.rstrip().endswith("```"):
+                        raw_text = raw_text.rstrip()[:-3]
+                raw_text = raw_text.strip()
+                data = json.loads(raw_text)
                 return data["subject"], data["body"].strip() + footer()
             elif r.status_code in (429, 503):
                 time.sleep(3 * (attempt + 1))
