@@ -1,10 +1,12 @@
 import os
 import csv
+import re
 import time
 import datetime as dt
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 
 # ── Inject Streamlit Cloud secrets into os.environ BEFORE any other imports ──
@@ -86,7 +88,7 @@ def load_leads_df(filepath="leads.csv"):
         df = pd.read_csv(filepath, dtype=str).fillna("")
         # Ensure standard columns exist
         for col in ["priority", "name", "niche", "need", "email", "phone", "website",
-                    "address", "issues", "subject", "body", "draft_source", "lat", "lon", "osm_id"]:
+                    "address", "issues", "subject", "body", "draft_source", "image_path", "lat", "lon", "osm_id"]:
             if col not in df.columns:
                 df[col] = ""
             else:
@@ -372,6 +374,9 @@ else:
                         st.caption("No draft generated")
 
                     st.caption(f"Priority Score: **{row['priority']}**")
+                    img_p = str(row.get("image_path", "")).strip()
+                    if img_p and img_p != "nan" and os.path.exists(img_p):
+                        st.markdown('<span style="background-color: #0284c7; color: white; padding: 2px 7px; border-radius: 10px; font-size: 0.75rem; font-weight: 600;">🎨 Mockup Attached</span>', unsafe_allow_html=True)
 
                     # On-demand AI draft generation button for this lead
                     btn_label = "✨ Generate AI Draft" if not src else "🔄 Regenerate with AI"
@@ -388,7 +393,7 @@ else:
                             df["body"] = df["body"].astype(str)
                             df["draft_source"] = df["draft_source"].astype(str)
                             df.loc[df["name"] == row["name"], "subject"] = str(subj)
-                            df.loc[df["name"] == row["name"], "body"] = str(bdy)
+                            df.loc[df["name"] == row["name"], "body"] = clean_body_markdown(str(bdy))
                             df.loc[df["name"] == row["name"], "draft_source"] = str(d_src)
                             save_leads_df(df)
                             st.success(f"✅ Generated via **{d_src}** for {row['name']}!")
@@ -432,8 +437,9 @@ else:
                 else:
                     st.success(f"Previewing {len(jobs)} emails scheduled to go out:")
                     for j in jobs:
-                        with st.expander(f"To: {j['email']} ({j['name']}) - {j['subject']}"):
-                            st.markdown(j["body"])
+                        has_img = bool(j.get("image_path") and os.path.exists(str(j.get("image_path"))))
+                        with st.expander(f"To: {j['email']} ({j['name']}) - {j['subject']}" + (" [🎨 Mockup Attached]" if has_img else "")):
+                            st.markdown(sender.body_to_plain(j["body"]))
 
         with act_col2:
             confirm_send = st.checkbox("Confirm I want to send live emails")
@@ -453,7 +459,12 @@ else:
                     smtp = sender.get_smtp_connection()
                     try:
                         for idx, j in enumerate(jobs):
-                            msg = sender.build_message(j["email"], j["subject"], j["body"], j["in_reply_to"], j["references"])
+                            msg = sender.build_message(
+                                j["email"], j["subject"], j["body"],
+                                j.get("in_reply_to"), j.get("references"),
+                                image_path=j.get("image_path"),
+                                name=j.get("name", "")
+                            )
                             smtp.send_message(msg)
                             sender.record(state, j, msg["Message-ID"])
                             sender.save_state(state)
@@ -573,14 +584,59 @@ else:
 
             st.divider()
             new_subject = st.text_input("Email Subject:", value=str(lead_row.get("subject", "")))
-            new_body = st.text_area("Email Body (Text Editor):", value=clean_body_markdown(str(lead_row.get("body", ""))), height=280)
+            new_body = st.text_area("Email Body (Text Editor):", value=clean_body_markdown(str(lead_row.get("body", ""))), height=260)
 
-            # Live Rendered Preview
-            st.markdown("##### 👁️ Live Formatted Email Preview")
-            with st.container():
-                st.markdown(f"**Subject:** {new_subject}")
-                st.markdown("---")
-                st.markdown(clean_body_markdown(new_body))
+            # --- Mockup Image Attachment Section ---
+            st.markdown("##### 🎨 Design Concept Mockup / Screenshot Attachment (Optional)")
+            curr_img_path = str(lead_row.get("image_path", "")).strip()
+            img_attached = bool(curr_img_path and curr_img_path != "nan" and os.path.exists(curr_img_path))
+
+            mock_col1, mock_col2 = st.columns([1, 1])
+            with mock_col1:
+                if img_attached:
+                    st.success(f"🖼️ Mockup Attached: `{os.path.basename(curr_img_path)}`")
+                    st.image(curr_img_path, caption=f"Concept Preview for {selected_lead_name}", use_container_width=True)
+                    if st.button("🗑️ Detach Mockup", key=f"del_img_{selected_lead_name}"):
+                        df["image_path"] = df["image_path"].astype(str)
+                        df.loc[df["name"] == selected_lead_name, "image_path"] = ""
+                        save_leads_df(df)
+                        st.info("Mockup detached.")
+                        st.rerun()
+                else:
+                    st.info("No mockup attached. You can attach a website redesign mockup, homepage wireframe, or concept graphic. It will be embedded inline in the HTML email.")
+
+            with mock_col2:
+                uploaded_mockup = st.file_uploader(
+                    "Upload Design Mockup / Screenshot (PNG, JPG, WEBP):",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key=f"uploader_{selected_lead_name}"
+                )
+                if uploaded_mockup is not None:
+                    os.makedirs("attachments", exist_ok=True)
+                    clean_slug = re.sub(r"[^a-zA-Z0-9_-]", "_", selected_lead_name).lower()[:30]
+                    ext = uploaded_mockup.name.split(".")[-1].lower()
+                    save_path = os.path.join("attachments", f"{clean_slug}_mockup.{ext}")
+                    with open(save_path, "wb") as f_out:
+                        f_out.write(uploaded_mockup.getbuffer())
+                    df["image_path"] = df["image_path"].astype(str)
+                    df.loc[df["name"] == selected_lead_name, "image_path"] = save_path
+                    save_leads_df(df)
+                    st.success(f"✅ Mockup attached! Embedded inline in outreach.")
+                    st.rerun()
+
+            st.divider()
+
+            # Live Rendered Email Preview (Exact recipient view with styling, bullets & mockup)
+            st.markdown("##### 👁️ Live Formatted Email Preview (Exact Recipient View)")
+            clean_preview_body = clean_body_markdown(new_body)
+            preview_img = str(df.loc[df["name"] == selected_lead_name, "image_path"].iloc[0]).strip()
+            has_preview_img = preview_img and preview_img != "nan" and os.path.exists(preview_img)
+            html_preview = sender.body_to_html(
+                clean_preview_body,
+                image_path=preview_img if has_preview_img else None,
+                lead_name=selected_lead_name
+            )
+            components.html(html_preview, height=450, scrolling=True)
 
             btn_save_col, btn_ai_col = st.columns([1, 1])
             with btn_save_col:

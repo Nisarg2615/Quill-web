@@ -185,11 +185,19 @@ def footer():
 
 
 def clean_body_markdown(text):
-    """Standardizes email body formatting so bullets and signatures never squash together."""
+    """
+    Standardizes email body formatting:
+    1. Splits any squashed inline bullets (• A ... • B ...) onto separate lines.
+    2. Ensures every bullet point starts with '* **Heading:**' so they never squash together.
+    3. Guarantees clean hard line breaks in the signature so 'Quillweb Team' and 'Website Design' never merge.
+    4. Ensures clean opt-out footer.
+    """
+    text = re.sub(r"(Quillweb Team)\s*\n\s*(Website Design)", r"\1  \n\2", text)
     lines = text.strip().split("\n")
     cleaned = []
     for line in lines:
         stripped = line.strip()
+        # Handle squashed bullets on a single line (e.g. • A ... • B ...)
         if stripped.count("•") > 1:
             for p in stripped.split("•"):
                 p_str = p.strip()
@@ -231,58 +239,119 @@ def followup_body(stage, name):
     return clean_body_markdown(body + footer())
 
 
-def body_to_plain(text):
-    """Strip markdown asterisks while keeping clean readable unicode bullets."""
+def body_to_plain(text, has_image=False):
+    """Strip all markdown asterisks and format clean unicode bullets with zero raw asterisks."""
     clean_text = clean_body_markdown(text)
-    lines = []
+    out = []
     for line in clean_text.split("\n"):
-        stripped = line.strip()
-        # Clean leading markdown bullets like * or - to a neat unicode bullet •
-        if re.match(r"^[\*\-]\s+", stripped):
-            stripped = "• " + re.sub(r"^[\*\-]\s+", "", stripped)
-        # Remove markdown asterisks for bold / italics
-        stripped = re.sub(r"\*\*([^\*]+)\*\*", r"\1", stripped)
-        stripped = re.sub(r"\*([^\*]+)\*", r"\1", stripped)
-        lines.append(stripped)
-    return "\n".join(lines)
+        s = line.strip()
+        if re.match(r"^[\*\-]\s+", s):
+            content = re.sub(r"^[\*\-]\s+", "", s)
+            content = re.sub(r"\*\*([^\*]+)\*\*", r"\1", content)
+            content = re.sub(r"\*([^\*]+)\*", r"\1", content)
+            content = content.replace("**", "").replace("*", "")
+            out.append("• " + content)
+        else:
+            line_clean = re.sub(r"\*\*([^\*]+)\*\*", r"\1", line)
+            line_clean = re.sub(r"\*([^\*]+)\*", r"\1", line_clean)
+            line_clean = line_clean.replace("**", "")
+            out.append(line_clean)
+    result = "\n".join(out)
+    if has_image:
+        result += "\n\n[Visual design concept mockup attached]"
+    return result
 
 
-def body_to_html(text):
-    """Convert email body with markdown formatting into clean professional HTML."""
+def body_to_html(text, image_path=None, lead_name=""):
+    """
+    Convert email body with markdown formatting into clean, professional HTML.
+    Groups list items into <ul><li>, bolds headings with <strong>, cleanly separates
+    the signature, and embeds inline mockup cards when an image is attached.
+    """
     clean_text = clean_body_markdown(text)
     paragraphs = clean_text.strip().split("\n\n")
     html_parts = []
+    
+    in_list = False
+    list_items = []
+
+    def flush_list():
+        nonlocal in_list, list_items
+        if list_items:
+            html_parts.append(
+                f"<ul style='margin: 14px 0 18px 22px; padding: 0; list-style-type: disc;'>"
+                f"{''.join(list_items)}</ul>"
+            )
+            list_items = []
+            in_list = False
+
     for p in paragraphs:
         p = p.strip()
         if not p:
             continue
-        lines = p.split("\n")
-        # Check if paragraph is a bulleted list
-        is_bullet_list = any(re.match(r"^(?:[•\*\-]|\d+\.)\s+", l.strip()) or l.strip().startswith("**") for l in lines)
-        if is_bullet_list and len(lines) > 1:
-            list_items = []
+        lines = [l.strip() for l in p.split("\n") if l.strip()]
+        
+        # Check if this paragraph contains bullet items
+        is_bullet_block = all(re.match(r"^(?:[\*\-•]|\d+\.)\s+", l) or l.startswith("**") for l in lines)
+        
+        if is_bullet_block:
             for l in lines:
-                l_str = l.strip()
-                l_str = re.sub(r"^(?:[•\*\-]|\d+\.)\s*", "", l_str)
-                l_str = re.sub(r"\*\*([^\*]+)\*\*", r"<strong style='color: #111;'>\1</strong>", l_str)
-                list_items.append(f"<li style='margin-bottom: 8px;'>{l_str}</li>")
-            html_parts.append(f"<ul style='margin: 12px 0 16px 20px; padding: 0;'>{''.join(list_items)}</ul>")
+                l_clean = re.sub(r"^(?:[\*\-•]|\d+\.)\s*", "", l)
+                l_clean = re.sub(r"\*\*([^\*]+)\*\*", r"<strong style='color: #111827;'>\1</strong>", l_clean)
+                l_clean = l_clean.replace("**", "").replace("*", "")
+                list_items.append(f"<li style='margin-bottom: 9px; line-height: 1.55; color: #2d3748;'>{l_clean}</li>")
+            in_list = True
         else:
+            flush_list()
             content = "<br>".join(lines)
-            content = re.sub(r"\*\*([^\*]+)\*\*", r"<strong style='color: #111;'>\1</strong>", content)
+            content = re.sub(r"\*\*([^\*]+)\*\*", r"<strong style='color: #111827;'>\1</strong>", content)
+            content = content.replace("**", "")
+            
+            # Check for opt-out footer
             if p.startswith("—") or p.startswith("--"):
-                html_parts.append(f"<p style='margin: 18px 0 0 0; font-size: 13px; color: #777; border-top: 1px solid #eee; padding-top: 12px;'>{content}</p>")
+                html_parts.append(
+                    f"<p style='margin: 22px 0 0 0; font-size: 13px; color: #718096; border-top: 1px solid #e2e8f0; padding-top: 12px; font-style: italic;'>"
+                    f"{content}</p>"
+                )
             else:
-                html_parts.append(f"<p style='margin: 0 0 14px 0; font-size: 15px; line-height: 1.55; color: #222;'>{content}</p>")
+                html_parts.append(f"<p style='margin: 0 0 14px 0; font-size: 15px; line-height: 1.6; color: #2d3748;'>{content}</p>")
 
-    body_content = "\n".join(html_parts)
+    flush_list()
+
+    # If image preview is present, inject inline concept preview card right before Best regards or footer
+    if image_path and os.path.exists(image_path):
+        biz_label = f" for <strong>{lead_name}</strong>" if lead_name else ""
+        mockup_card = f"""
+<div style="margin: 22px 0 24px 0; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; background-color: #f8fafc;">
+  <div style="background-color: #0f172a; color: #ffffff; padding: 9px 16px; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;">
+    🎨 Custom Visual Design Preview{biz_label}
+  </div>
+  <div style="padding: 14px; text-align: center;">
+    <img src="cid:mockup_image" alt="Website Design Mockup" style="max-width: 100%; height: auto; border-radius: 6px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: inline-block;" />
+  </div>
+  <div style="background-color: #f1f5f9; padding: 8px 14px; font-size: 12px; color: #64748b; text-align: center; border-top: 1px solid #e2e8f0;">
+    Complimentary initial design mockup showing proposed improvements
+  </div>
+</div>
+"""
+        inserted = False
+        for i, part in enumerate(html_parts):
+            if "Best regards" in part:
+                html_parts.insert(i, mockup_card)
+                inserted = True
+                break
+        if not inserted:
+            if html_parts and ("font-style: italic" in html_parts[-1] or "border-top: 1px solid" in html_parts[-1]):
+                html_parts.insert(-1, mockup_card)
+            else:
+                html_parts.append(mockup_card)
+
+    body_html = "\n".join(html_parts)
     return f"""<!DOCTYPE html>
 <html>
-<head>
-<meta charset="utf-8">
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.55; color: #222; background-color: #fff; margin: 0; padding: 12px;">
-{body_content}
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; color: #2d3748; background-color: #ffffff; margin: 0; padding: 14px;">
+{body_html}
 </body>
 </html>"""
 
@@ -302,7 +371,7 @@ def get_smtp_connection():
     return smtp
 
 
-def build_message(to, subject, body, in_reply_to=None, references=None):
+def build_message(to, subject, body, in_reply_to=None, references=None, image_path=None, name=""):
     from_email = os.getenv("SMTP_FROM_EMAIL") or os.getenv("SMTP_USER") or os.environ.get("GMAIL_ADDRESS")
     m = EmailMessage()
     m["From"] = formataddr((os.getenv("SENDER_NAME", ""), from_email))
@@ -315,13 +384,35 @@ def build_message(to, subject, body, in_reply_to=None, references=None):
         m["In-Reply-To"] = in_reply_to
         m["References"] = references or in_reply_to
 
-    # 1. Plain text version (strips raw markdown asterisks)
-    plain_content = body_to_plain(body)
+    has_img = bool(image_path and os.path.exists(image_path))
+
+    # 1. Plain text version (strips raw markdown asterisks, clean unicode bullets)
+    plain_content = body_to_plain(body, has_image=has_img)
     m.set_content(plain_content)
 
-    # 2. Rich HTML version (renders bold tags and clean bullet formatting for Gmail/Outlook)
-    html_content = body_to_html(body)
+    # 2. Rich HTML version (renders bold tags and clean <ul><li> lists, plus mockup card)
+    html_content = body_to_html(body, image_path=image_path if has_img else None, lead_name=name)
     m.add_alternative(html_content, subtype="html")
+
+    # 3. Inline Image Attachment (MIME multipart/related)
+    if has_img:
+        try:
+            import mimetypes
+            ctype, _ = mimetypes.guess_type(image_path)
+            if not ctype or not ctype.startswith("image/"):
+                ctype = "image/png"
+            maintype, subtype = ctype.split("/", 1)
+            with open(image_path, "rb") as f:
+                img_data = f.read()
+            m.get_payload()[-1].add_related(
+                img_data,
+                maintype=maintype,
+                subtype=subtype,
+                cid="<mockup_image>",
+                filename=os.path.basename(image_path)
+            )
+        except Exception as e:
+            print(f"Warning: Failed to attach inline image {image_path}: {e}")
 
     return m
 
@@ -339,6 +430,7 @@ def due_followups(state, sup):
             jobs.append({"email": email, "name": e["name"], "stage": nxt,
                          "subject": "Re: " + e["subject"].removeprefix("Re: "),
                          "body": followup_body(nxt, e["name"]),
+                         "image_path": "",
                          "in_reply_to": e["last_id"], "references": e["first_id"]})
     return jobs
 
@@ -355,7 +447,8 @@ def new_jobs(csv_path, state, sup, min_priority):
             if int(float(r.get("priority") or 0)) < min_priority:
                 continue
             jobs.append({"email": em, "name": r["name"], "stage": 0, "subject": r["subject"],
-                         "body": r["body"], "in_reply_to": None, "references": None})
+                         "body": r["body"], "image_path": r.get("image_path", ""),
+                         "in_reply_to": None, "references": None})
     return jobs
 
 
@@ -434,7 +527,9 @@ def cmd_send(a):
                     msg_id = send_via_brevo_api(brevo_api_key, j["email"], j["subject"], j["body"], sender_name, sender_email)
                 else:
                     msg = build_message(j["email"], j["subject"], j["body"],
-                                        j["in_reply_to"], j["references"])
+                                        j["in_reply_to"], j["references"],
+                                        image_path=j.get("image_path"),
+                                        name=j.get("name", ""))
                     smtp.send_message(msg)
                     msg_id = msg["Message-ID"]
             except Exception as e:

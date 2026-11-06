@@ -186,37 +186,117 @@ def pagespeed_score(url):
 
 
 def audit_html(html, final_url, elapsed):
-    """Pure function: returns (issues, need_points). Easy to test offline."""
+    """
+    Extracts rich website intelligence:
+    - issues: list of short issue strings (for scoring & CSV)
+    - need: 0-100 priority score
+    - title: real webpage title
+    - meta_desc: real meta description
+    - headings: prominent H1/H2 headlines/services
+    - diagnostics: structured issue/impact/fix dictionaries for hyper-personalized email pitching
+    """
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(" ", strip=True).lower()
     issues, need = [], 0
+    diagnostics = []
 
-    def flag(msg, pts):
+    def flag(msg, pts, impact="", fix=""):
         nonlocal need
         issues.append(msg)
         need += pts
+        if impact and fix:
+            diagnostics.append({"issue": msg, "impact": impact, "fix": fix})
 
-    if not final_url.startswith("https://"):
-        flag("No HTTPS - browsers label the site 'Not secure'", 20)
-    if not soup.find("meta", attrs={"name": re.compile("^viewport$", re.I)}):
-        flag("Not mobile-friendly (no responsive viewport)", 25)
-    if not soup.find("meta", attrs={"name": re.compile("^description$", re.I)}):
-        flag("No search-result description (hurts Google visibility)", 10)
+    # 1. Page Title & Meta Description
     title = soup.title.string.strip() if soup.title and soup.title.string else ""
+    meta_tag = soup.find("meta", attrs={"name": re.compile(r"^description$", re.I)})
+    meta_desc = meta_tag.get("content", "").strip() if meta_tag else ""
+
+    # 2. Prominent H1/H2 Headings & Services
+    headings = []
+    for h in soup.find_all(["h1", "h2"]):
+        h_text = h.get_text(" ", strip=True)
+        if 4 < len(h_text) < 80 and h_text not in headings:
+            headings.append(h_text)
+        if len(headings) >= 5:
+            break
+
+    # 3. HTTPS / Security
+    if not final_url.startswith("https://"):
+        flag(
+            "No HTTPS - browsers label the site 'Not secure'",
+            20,
+            impact="Modern browsers display a 'Not Secure' warning badge next to your URL, making first-time visitors hesitate and leave before inquiring.",
+            fix="Install an SSL certificate with automatic HTTPS encryption to secure patient/client data and establish instant trust."
+        )
+
+    # 4. Mobile Responsiveness / Viewport
+    if not soup.find("meta", attrs={"name": re.compile(r"^viewport$", re.I)}):
+        flag(
+            "Not mobile-friendly (no responsive viewport)",
+            25,
+            impact="Over 65% of local searches happen on mobile devices. Without a responsive viewport, your site appears shrunk or broken on smartphones, forcing users to pinch and zoom.",
+            fix="Rebuild with a fluid mobile-first responsive layout that renders flawlessly across all modern smartphones and tablets."
+        )
+
+    # 5. Search Description (SEO snippet)
+    if not meta_desc or len(meta_desc) < 25:
+        flag(
+            "Missing Google search description (hurts search visibility)",
+            10,
+            impact="Google displays fragmented text or random menu links in search snippets instead of a compelling description of your business, lowering your click-through rate.",
+            fix="Craft optimized meta descriptions and local service schema so your business stands out prominently in Google Search & Maps results."
+        )
+
+    # 6. Title tag quality
     if len(title) < 10:
-        flag("Missing or very short page title (SEO)", 10)
+        flag(
+            "Missing or very short page title (SEO gap)",
+            10,
+            impact="A weak title tag signals lower relevance to Google's ranking algorithm, making it harder for local searchers to discover your site.",
+            fix="Optimize your title tag with high-intent local search terms and your key service offerings."
+        )
+
+    # 7. Form / Online Booking
     has_form = bool(soup.find("form"))
     if not has_form and not any(w in text for w in BOOK_WORDS):
-        flag("No contact form or online booking / quote option", 15)
+        flag(
+            "No contact form or online booking / quote option",
+            15,
+            impact="Potential customers browsing during work hours or late in the evening cannot book or request quotes without calling, causing you to lose after-hours inquiries.",
+            fix="Add a frictionless 2-step inquiry and booking form directly on your homepage with instant email/SMS notifications."
+        )
+
+    # 8. Tap-to-Call on Mobile
     if not soup.select('a[href^="tel:"]'):
-        flag("Phone number isn't tap-to-call on mobile", 10)
+        flag(
+            "Phone number isn't tap-to-call on mobile",
+            10,
+            impact="Smartphone users cannot tap your phone number to dial directly. Having to memorize or copy-paste causes high drop-off rates.",
+            fix="Implement prominent tap-to-call buttons and a sticky mobile action bar so prospects can reach you in one second."
+        )
+
+    # 9. Outdated Copyright
     years = [int(y) for y in re.findall(
         r"(?:©|&copy;|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})", html, re.I)]
     if years and max(years) <= THIS_YEAR - 2:
-        flag(f"Looks outdated (footer says {max(years)})", 15)
-    if elapsed > 3:
-        flag(f"Slow to respond ({elapsed:.1f}s)", 15)
-    return issues, min(need, 100)
+        flag(
+            f"Looks outdated (footer says ©{max(years)})",
+            15,
+            impact=f"A copyright date of {max(years)} can make prospects question whether your business is actively taking new clients or if your equipment/pricing is current.",
+            fix="Modernize the layout with fresh 2026 branding, current customer reviews, and an active modern aesthetic."
+        )
+
+    # 10. Slow Response Time
+    if elapsed > 3.0:
+        flag(
+            f"Slow to respond ({elapsed:.1f}s)",
+            15,
+            impact=f"Your homepage took {elapsed:.1f} seconds to respond. Studies show 40%+ of visitors abandon sites that take more than 3 seconds to load on mobile.",
+            fix="Optimize image assets, caching, and clean lightweight code to achieve lightning-fast sub-second load times."
+        )
+
+    return issues, min(need, 100), title, meta_desc, headings, diagnostics
 
 
 def clean_emails(found, site_host):
@@ -248,6 +328,11 @@ def get(url, timeout=12):
 def audit_lead(lead, use_pagespeed):
     site = norm_url(lead["website"])
     lead["issues"], lead["need"], lead["email"] = [], 0, lead["osm_email"]
+    lead["site_title"] = ""
+    lead["headings"] = ""
+    lead["diagnostics"] = []
+    lead.setdefault("image_path", "")
+
     if not site:
         lead.update(issues=["No website"], need=100)
         return lead
@@ -261,13 +346,23 @@ def audit_lead(lead, use_pagespeed):
         lead.update(issues=["Website is down or unreachable"], need=95)
         return lead
 
-    issues, need = audit_html(r.text, r.url, elapsed)
+    issues, need, title, meta_desc, headings, diagnostics = audit_html(r.text, r.url, elapsed)
     if use_pagespeed:
         ps = pagespeed_score(r.url)
         if ps is not None and ps < 50:
-            issues.append(f"Poor mobile speed score ({ps}/100 on Google PageSpeed)")
+            msg = f"Poor mobile speed score ({ps}/100 on Google PageSpeed)"
+            issues.append(msg)
+            diagnostics.append({
+                "issue": msg,
+                "impact": f"Google lighthouse clocks your mobile speed at {ps}/100, which actively hurts your Google mobile ranking and drives mobile bounce rates.",
+                "fix": "Re-architect page assets to achieve a 90+ Google PageSpeed mobile score."
+            })
             need = min(100, need + 20)
+
     lead["issues"], lead["need"] = issues, need
+    lead["site_title"] = title
+    lead["headings"] = " | ".join(headings)
+    lead["diagnostics"] = diagnostics
 
     if not lead["email"]:
         host = urlparse(r.url).netloc
@@ -324,10 +419,12 @@ def footer():
 def clean_body_markdown(text):
     """
     Standardizes email body formatting:
-    1. Ensures every bullet point starts with standard markdown '* **Heading:**' so they never squash together.
-    2. Splits any bullet points that Gemini squashed on a single line.
-    3. Guarantees line breaks in the signature.
+    1. Splits any squashed inline bullets (• A ... • B ...) onto separate lines.
+    2. Ensures every bullet point starts with standard markdown '* **Heading:**' so they never squash together.
+    3. Guarantees line breaks in the signature so 'Quillweb Team' and 'Website Design' never merge.
+    4. Ensures clean opt-out footer.
     """
+    text = re.sub(r"(Quillweb Team)\s*\n\s*(Website Design)", r"\1  \n\2", text)
     lines = text.strip().split("\n")
     cleaned = []
     for line in lines:
@@ -382,32 +479,35 @@ def template_draft(lead, city=""):
             f"I recently came across {name} and was interested in the range of services you offer, particularly your {niche_services}.\n\n"
             f"I noticed that your business has built a strong reputation among customers, and I believe there's a strong opportunity to take that reputation further with a professional website.\n\n"
             f"I'd love to help you design and develop a modern, professional website for {name} that would:\n\n"
-            f"**Attract more local customers:** Help people searching online for {niche_label} in {city_name} and surrounding areas discover your business.\n"
-            f"**Generate more enquiries:** Include dedicated service pages, enquiry forms and prominent call buttons so potential customers can easily contact you for {niche_label}.\n"
-            f"**Showcase your products and services:** Present your different services, specialties and expertise in an organised, professional way.\n"
-            f"**Build customer confidence:** Display your existing customer reviews, experience and credentials to help potential customers feel confident choosing your business.\n"
-            f"**Make contacting you easier:** Provide your location, business hours, contact details and directions in one convenient place.\n\n"
+            f"* **Attract more local customers:** Help people searching online for {niche_label} in {city_name} and surrounding areas discover your business.\n"
+            f"* **Generate more enquiries:** Include dedicated service pages, enquiry forms and prominent call buttons so potential customers can easily contact you for {niche_label}.\n"
+            f"* **Showcase your products and services:** Present your different services, specialties and expertise in an organised, professional way.\n"
+            f"* **Build customer confidence:** Display your existing customer reviews, experience and credentials to help potential customers feel confident choosing your business.\n"
+            f"* **Make contacting you easier:** Provide your location, business hours, contact details and directions in one convenient place.\n\n"
             f"My aim wouldn't just be to create a visually appealing website, but to build something that actively supports your business by helping you reach more potential customers and convert online searches into genuine enquiries.\n\n"
-            f"I'd be happy to discuss some ideas for your website and even put together an initial design concept to show you what it could look like, with no obligation.\n\n"
+            f"I'd be happy to discuss some ideas for your website and even put together an initial visual design concept to show you what it could look like, with no obligation.\n\n"
             f"Would you be open to having a quick conversation about this?"
         )
     else:
-        bullets = "\n".join(f"- {i}" for i in issues[:3]) if issues else "- A few technical improvements to boost visibility & speed"
-        subject = f"Website ideas for {name}"
+        diagnostics = lead.get("diagnostics", [])
+        if diagnostics:
+            bullet_lines = []
+            for d in diagnostics[:4]:
+                bullet_lines.append(f"* **{d['issue']}:** {d['impact']} {d['fix']}")
+            bullets = "\n".join(bullet_lines)
+        else:
+            bullets = "\n".join(f"* **{i}:** Recommended update to boost conversions and patient bookings." for i in issues[:3]) if issues else "* **Mobile and SEO Optimization:** Recommended updates to boost customer enquiries."
+
+        subject = f"Website suggestions for {name}"
+        site_mention = f"While reviewing your website ({lead['website']}), " if lead.get("website") else "While reviewing your online presence, "
         body = (
             f"Hi,\n\n"
             f"I recently came across {name} and was interested in the range of services you offer, particularly your {niche_services}.\n\n"
-            f"I noticed that your business has built a strong reputation in {city_name}. While reviewing your website, I noticed a few specific areas where small updates could significantly increase the number of enquiries you receive:\n\n"
+            f"I noticed that your business has built a strong reputation in {city_name}. {site_mention}I noticed a few specific technical bottlenecks where targeted updates would significantly increase the number of enquiries you receive:\n\n"
             f"{bullets}\n\n"
-            f"I'd love to help you refresh and modernise {name}'s website to:\n\n"
-            f"**Attract more local customers:** Optimise your search visibility so potential clients searching in {city_name} and surrounding areas find {name} first.\n"
-            f"**Generate more enquiries:** Include dedicated service pages, frictionless quote/booking forms and prominent tap-to-call buttons on mobile.\n"
-            f"**Showcase your full services:** Present your range of services, credentials and customer testimonials in a modern, organised layout.\n"
-            f"**Build customer confidence:** Highlight your reviews, ratings and experience so prospects immediately trust choosing you over competitors.\n"
-            f"**Fast, mobile-friendly experience:** Ensure your website loads quickly and looks flawless across all smartphones, tablets and desktop computers.\n\n"
-            f"My aim wouldn't just be to create a visually appealing website, but to build something that actively supports your business by turning online visitors into genuine enquiries.\n\n"
-            f"I'd be happy to discuss some ideas for your website and even put together an initial design concept to show you what it could look like, with no obligation.\n\n"
-            f"Would you be open to having a quick conversation about this?"
+            f"My aim wouldn't just be to create a visually appealing website, but to build something that actively supports {name} by turning online visitors into genuine customer bookings.\n\n"
+            f"I'd be happy to put together a free visual design concept and mockup to show you what an improved version could look like, with zero obligation.\n\n"
+            f"Would you be open to taking a look?"
         )
 
     return subject, clean_body_markdown(body + footer())
@@ -423,31 +523,54 @@ def gemini_draft(lead, city=""):
     has_no_site = not lead.get("website") or (issues and (issues[0] == "No website" or issues[0].startswith("Only a social")))
     
     if has_no_site:
-        context_prompt = (
-            f"'{lead['name']}' currently DOES NOT have a website (or only has a basic social page). "
-            f"Pitch building and launching a brand-new, modern website from scratch so they can capture local customers who search online."
+        prompt = (
+            f"Write a warm, high-converting professional cold email from a boutique website design studio (Quillweb Team) "
+            f"to '{lead['name']}', a local {niche_label} business in {city_name}. "
+            f"They specialize in: {niche_services}.\n"
+            f"Situation: '{lead['name']}' currently DOES NOT have a website (or only has a basic social page). "
+            f"Pitch building and launching a brand-new, modern website from scratch so they can capture local customers searching online in {city_name}.\n"
+            f"Follow this exact structure:\n"
+            f"1. Warm opening acknowledging their business and services ({niche_services}).\n"
+            f"2. Compliment their local reputation in {city_name} and note the huge opportunity for an upgraded website.\n"
+            f"3. 5 bullet points starting with standard markdown bold tags: "
+            f"* **Attract more local customers:**, * **Generate more enquiries:**, * **Showcase your full services:**, * **Build customer confidence:**, * **Fast, mobile-friendly experience:**\n"
+            f"4. Closing explaining the aim is not just aesthetics, but helping them reach more customers and convert searches into genuine enquiries.\n"
+            f"5. Low-friction offer to put together an initial visual design concept / mockup with zero obligation.\n"
+            f"6. A one-line question asking if they would be open to a quick conversation.\n"
+            f"Return ONLY valid JSON: {{\"subject\": \"...\", \"body\": \"...\"}} where body has no signature or footer."
         )
     else:
-        problems = "; ".join(issues[:3]) if issues else "modernization and mobile optimization"
-        context_prompt = (
-            f"'{lead['name']}' already has a website, but our audit found these technical issues: {problems}. "
-            f"Pitch modernizing and refreshing their website to fix these issues and increase client bookings."
-        )
+        site_title = lead.get("site_title", "")
+        headings_str = lead.get("headings", "")
+        diagnostics = lead.get("diagnostics", [])
+        if diagnostics:
+            diag_lines = [
+                f"- Issue: {d['issue']}\n  Why it hurts them: {d['impact']}\n  How our redesign fixes it: {d['fix']}"
+                for d in diagnostics[:4]
+            ]
+            diag_text = "\n".join(diag_lines)
+        else:
+            diag_text = "- Bottlenecks: Needs modern mobile layout, frictionless online enquiry forms, and local SEO optimizations."
 
-    prompt = (
-        f"Write a warm, high-converting professional cold email from a website design studio (Quillweb Team) "
-        f"to '{lead['name']}', a local {niche_label} business in {city_name}. "
-        f"They specialize in: {niche_services}.\n"
-        f"Situation: {context_prompt}\n"
-        f"Follow this exact structure:\n"
-        f"1. Warm opening acknowledging their business and services.\n"
-        f"2. Compliment their local reputation and note the opportunity for an upgraded website.\n"
-        f"3. 5 bullet points starting with bold tags: **Attract more local customers:**, **Generate more enquiries:**, **Showcase your full services:**, **Build customer confidence:**, **Fast, mobile-friendly experience:**\n"
-        f"4. Closing explaining the aim is not just aesthetics, but helping them reach more customers and convert searches into genuine enquiries.\n"
-        f"5. Low-friction offer to put together an initial design concept with no obligation.\n"
-        f"6. A one-line question asking if they would be open to a quick conversation.\n"
-        f"Return ONLY valid JSON: {{\"subject\": \"...\", \"body\": \"...\"}} where body has no signature or footer."
-    )
+        prompt = (
+            f"Write a warm, highly-researched, personalized cold email from a boutique website design studio (Quillweb Team) "
+            f"to '{lead['name']}', a local {niche_label} business in {city_name}.\n"
+            f"Their website: {lead.get('website', '')}\n"
+            f"Website Title: {site_title}\n"
+            f"Services mentioned on their site: {headings_str or niche_services}\n\n"
+            f"Our website technical audit revealed these exact issues:\n{diag_text}\n\n"
+            f"Instructions:\n"
+            f"1. Warm opening acknowledging their business and referencing their specific offerings ({headings_str or niche_services}).\n"
+            f"2. State that while reviewing their website ({lead.get('website', '')}), you noticed a few specific technical bottlenecks that are currently costing them online customer bookings.\n"
+            f"3. Write 3 to 4 distinct bullet points (starting with * **Specific Fix Title:**). In EACH bullet point you MUST:\n"
+            f"   - Name the exact issue found on their website.\n"
+            f"   - Clearly explain WHY this hurts their business (e.g. lost phone calls, lost after-hours inquiries, lower Google clicks).\n"
+            f"   - Clearly explain HOW our proposed change directly fixes it to increase customer bookings and enquiries.\n"
+            f"4. Closing explaining our goal isn't just a pretty website, but a high-converting customer-acquisition engine for {lead['name']}.\n"
+            f"5. Low-friction offer to put together a free visual design concept / mockup showing what these improvements would look like, with zero obligation.\n"
+            f"6. A friendly 1-line question asking if they would be open to a quick conversation or taking a look at the concept.\n"
+            f"Return ONLY valid JSON: {{\"subject\": \"...\", \"body\": \"...\"}} where body has no signature or footer."
+        )
 
     # Models list with smart fallback in case one hits the 20 req/day free tier quota
     custom_model = os.getenv("GEMINI_MODEL")
@@ -591,7 +714,7 @@ def main():
             l["subject"], l["body"], l["draft_source"] = subj, body, "Offline Template"
 
     cols = ["priority", "name", "niche", "need", "email", "phone", "website",
-            "address", "issues", "subject", "body", "draft_source", "lat", "lon", "osm_id"]
+            "address", "issues", "subject", "body", "draft_source", "image_path", "lat", "lon", "osm_id"]
     with open(a.out, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
