@@ -64,12 +64,15 @@ def load_leads_df(filepath="leads.csv"):
     if not os.path.exists(filepath):
         return pd.DataFrame()
     try:
-        df = pd.read_csv(filepath)
+        # Load all columns as string/object to avoid dtype mismatch when setting text values
+        df = pd.read_csv(filepath, dtype=str).fillna("")
         # Ensure standard columns exist
         for col in ["priority", "name", "niche", "need", "email", "phone", "website",
                     "address", "issues", "subject", "body", "draft_source", "lat", "lon", "osm_id"]:
             if col not in df.columns:
                 df[col] = ""
+            else:
+                df[col] = df[col].astype(str)
         return df
     except Exception as e:
         st.error(f"Error loading {filepath}: {e}")
@@ -331,9 +334,12 @@ else:
                             if isinstance(lead_dict.get("issues"), str):
                                 lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
                             subj, bdy, d_src = draft(lead_dict, city_input)
-                            df.loc[df["name"] == row["name"], "subject"] = subj
-                            df.loc[df["name"] == row["name"], "body"] = bdy
-                            df.loc[df["name"] == row["name"], "draft_source"] = d_src
+                            df["subject"] = df["subject"].astype(str)
+                            df["body"] = df["body"].astype(str)
+                            df["draft_source"] = df["draft_source"].astype(str)
+                            df.loc[df["name"] == row["name"], "subject"] = str(subj)
+                            df.loc[df["name"] == row["name"], "body"] = str(bdy)
+                            df.loc[df["name"] == row["name"], "draft_source"] = str(d_src)
                             save_leads_df(df)
                         st.success(f"Generated via {d_src}!")
                         st.rerun()
@@ -436,8 +442,10 @@ else:
             btn_save_col, btn_ai_col = st.columns([1, 1])
             with btn_save_col:
                 if st.button("💾 Save Changes to CSV", type="primary", use_container_width=True):
-                    df.loc[df["name"] == selected_lead_name, "subject"] = new_subject
-                    df.loc[df["name"] == selected_lead_name, "body"] = new_body
+                    df["subject"] = df["subject"].astype(str)
+                    df["body"] = df["body"].astype(str)
+                    df.loc[df["name"] == selected_lead_name, "subject"] = str(new_subject)
+                    df.loc[df["name"] == selected_lead_name, "body"] = str(new_body)
                     save_leads_df(df)
                     st.success(f"Changes saved for {selected_lead_name}!")
                     st.rerun()
@@ -450,9 +458,12 @@ else:
                         if isinstance(lead_dict.get("issues"), str):
                             lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
                         subj, bdy, d_src = draft(lead_dict, city_input)
-                        df.loc[df["name"] == selected_lead_name, "subject"] = subj
-                        df.loc[df["name"] == selected_lead_name, "body"] = bdy
-                        df.loc[df["name"] == selected_lead_name, "draft_source"] = d_src
+                        df["subject"] = df["subject"].astype(str)
+                        df["body"] = df["body"].astype(str)
+                        df["draft_source"] = df["draft_source"].astype(str)
+                        df.loc[df["name"] == selected_lead_name, "subject"] = str(subj)
+                        df.loc[df["name"] == selected_lead_name, "body"] = str(bdy)
+                        df.loc[df["name"] == selected_lead_name, "draft_source"] = str(d_src)
                         save_leads_df(df)
                     st.success(f"Generated via {d_src}!")
                     st.rerun()
