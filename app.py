@@ -391,7 +391,8 @@ else:
                 if curr_subj and curr_subj != "nan" and curr_body and curr_body != "nan":
                     with st.expander(f"✉️ Preview Email: {curr_subj[:60]}..."):
                         st.markdown(f"**Subject:** {curr_subj}")
-                        st.text_area("Draft Body:", value=curr_body, height=180, key=f"body_prev_{idx}", disabled=True)
+                        st.markdown("---")
+                        st.markdown(curr_body)
 
                 st.divider()
 
@@ -423,7 +424,7 @@ else:
                     st.success(f"Previewing {len(jobs)} emails scheduled to go out:")
                     for j in jobs:
                         with st.expander(f"To: {j['email']} ({j['name']}) - {j['subject']}"):
-                            st.text(j["body"])
+                            st.markdown(j["body"])
 
         with act_col2:
             confirm_send = st.checkbox("Confirm I want to send live emails")

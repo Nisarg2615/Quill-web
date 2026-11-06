@@ -127,6 +127,60 @@ def followup_body(stage, name):
     return body + footer()
 
 
+def body_to_plain(text):
+    """Strip markdown asterisks while keeping clean readable unicode bullets."""
+    lines = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        # Clean leading markdown bullets like * or - to a neat unicode bullet •
+        if re.match(r"^[\*\-]\s+", stripped):
+            stripped = "• " + re.sub(r"^[\*\-]\s+", "", stripped)
+        # Remove markdown asterisks for bold / italics
+        stripped = re.sub(r"\*\*([^\*]+)\*\*", r"\1", stripped)
+        stripped = re.sub(r"\*([^\*]+)\*", r"\1", stripped)
+        lines.append(stripped)
+    return "\n".join(lines)
+
+
+def body_to_html(text):
+    """Convert email body with markdown formatting into clean professional HTML."""
+    paragraphs = text.strip().split("\n\n")
+    html_parts = []
+    for p in paragraphs:
+        p = p.strip()
+        if not p:
+            continue
+        lines = p.split("\n")
+        # Check if paragraph is a bulleted list
+        is_bullet_list = any(re.match(r"^(?:[•\*\-]|\d+\.)\s+", l.strip()) or l.strip().startswith("**") for l in lines)
+        if is_bullet_list and len(lines) > 1:
+            list_items = []
+            for l in lines:
+                l_str = l.strip()
+                l_str = re.sub(r"^(?:[•\*\-]|\d+\.)\s*", "", l_str)
+                l_str = re.sub(r"\*\*([^\*]+)\*\*", r"<strong style='color: #111;'>\1</strong>", l_str)
+                list_items.append(f"<li style='margin-bottom: 8px;'>{l_str}</li>")
+            html_parts.append(f"<ul style='margin: 12px 0 16px 20px; padding: 0;'>{''.join(list_items)}</ul>")
+        else:
+            content = "<br>".join(lines)
+            content = re.sub(r"\*\*([^\*]+)\*\*", r"<strong style='color: #111;'>\1</strong>", content)
+            if p.startswith("—") or p.startswith("--"):
+                html_parts.append(f"<p style='margin: 18px 0 0 0; font-size: 13px; color: #777; border-top: 1px solid #eee; padding-top: 12px;'>{content}</p>")
+            else:
+                html_parts.append(f"<p style='margin: 0 0 14px 0; font-size: 15px; line-height: 1.55; color: #222;'>{content}</p>")
+
+    body_content = "\n".join(html_parts)
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.55; color: #222; background-color: #fff; margin: 0; padding: 12px;">
+{body_content}
+</body>
+</html>"""
+
+
 def get_smtp_connection():
     host = os.getenv("SMTP_HOST", "smtp.gmail.com")
     port = int(os.getenv("SMTP_PORT", "465" if host == "smtp.gmail.com" else "587"))
@@ -154,7 +208,15 @@ def build_message(to, subject, body, in_reply_to=None, references=None):
     if in_reply_to:
         m["In-Reply-To"] = in_reply_to
         m["References"] = references or in_reply_to
-    m.set_content(body)
+
+    # 1. Plain text version (strips raw markdown asterisks)
+    plain_content = body_to_plain(body)
+    m.set_content(plain_content)
+
+    # 2. Rich HTML version (renders bold tags and clean bullet formatting for Gmail/Outlook)
+    html_content = body_to_html(body)
+    m.add_alternative(html_content, subtype="html")
+
     return m
 
 
@@ -208,12 +270,13 @@ def send_via_brevo_api(api_key, to_email, subject, body, sender_name, sender_ema
         "api-key": api_key,
         "content-type": "application/json",
     }
-    html_content = "".join(f"<p>{p.replace('\n', '<br>')}</p>" for p in body.split("\n\n"))
+    html_content = body_to_html(body)
+    plain_content = body_to_plain(body)
     payload = {
         "sender": {"name": sender_name or "Quillweb Team", "email": sender_email},
         "to": [{"email": to_email}],
         "subject": subject,
-        "textContent": body,
+        "textContent": plain_content,
         "htmlContent": html_content,
         "headers": {
             "List-Unsubscribe": f"<mailto:{sender_email}?subject=unsubscribe>"
