@@ -6,6 +6,22 @@ from concurrent.futures import ThreadPoolExecutor
 import streamlit as st
 import pandas as pd
 
+# ── Inject Streamlit Cloud secrets into os.environ BEFORE any other imports ──
+# This must happen here, before leadgen is imported, because leadgen.py reads
+# os.environ at module level when it loads. st.secrets is available immediately
+# in the main script but NOT inside a function called during module import.
+_EXPECTED_KEYS = [
+    "GEMINI_API_KEY", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD",
+    "CONTACT_EMAIL", "SENDER_NAME", "SENDER_TITLE",
+    "PAGESPEED_API_KEY", "BREVO_API_KEY", "GEMINI_MODEL",
+]
+for _k in _EXPECTED_KEYS:
+    try:
+        if _k in st.secrets and not os.environ.get(_k):
+            os.environ[_k] = str(st.secrets[_k])
+    except Exception:
+        pass
+
 # Load environment variables
 from leadgen import (
     _load_env, NICHES, geocode, fetch_businesses, parse_element,
@@ -128,6 +144,19 @@ with st.sidebar:
     st.metric("Sent Today", f"{sent_today_count} / {eff_cap}")
     st.metric("Total Contacted", len(sender_state))
     st.caption("Powered by Gmail Direct SMTP")
+
+    st.divider()
+    # ── Live API key status indicator ──
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    gmail_addr = os.environ.get("GMAIL_ADDRESS", "")
+    if gemini_key:
+        st.success(f"🤖 Gemini API: ✅ Loaded (`...{gemini_key[-6:]}`)")
+    else:
+        st.error("🤖 Gemini API: ❌ NOT loaded — add GEMINI_API_KEY to Secrets")
+    if gmail_addr:
+        st.success(f"📧 Gmail: ✅ `{gmail_addr}`")
+    else:
+        st.warning("📧 Gmail: ❌ GMAIL_ADDRESS not set")
 
 
 # --- Pipeline Execution ---
@@ -329,20 +358,23 @@ else:
                     btn_label = "✨ Generate AI Draft" if not src else "🔄 Regenerate with AI"
                     if st.button(btn_label, key=f"btn_draft_{idx}"):
                         with st.spinner(f"Calling Gemini AI for {row['name']}..."):
-                            _load_env()
                             lead_dict = row.to_dict()
                             if isinstance(lead_dict.get("issues"), str):
                                 lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
-                            subj, bdy, d_src = draft(lead_dict, city_input)
-                            df["subject"] = df["subject"].astype(str)
-                            df["body"] = df["body"].astype(str)
-                            df["draft_source"] = df["draft_source"].astype(str)
-                            df.loc[df["name"] == row["name"], "subject"] = str(subj)
-                            df.loc[df["name"] == row["name"], "body"] = str(bdy)
-                            df.loc[df["name"] == row["name"], "draft_source"] = str(d_src)
-                            save_leads_df(df)
-                        st.success(f"Generated via {d_src}!")
-                        st.rerun()
+                            # Verify key is present before calling
+                            if not os.environ.get("GEMINI_API_KEY"):
+                                st.error("❌ GEMINI_API_KEY not found! Please add it to Streamlit Secrets (Settings → Secrets).")
+                            else:
+                                subj, bdy, d_src = draft(lead_dict, city_input)
+                                df["subject"] = df["subject"].astype(str)
+                                df["body"] = df["body"].astype(str)
+                                df["draft_source"] = df["draft_source"].astype(str)
+                                df.loc[df["name"] == row["name"], "subject"] = str(subj)
+                                df.loc[df["name"] == row["name"], "body"] = str(bdy)
+                                df.loc[df["name"] == row["name"], "draft_source"] = str(d_src)
+                                save_leads_df(df)
+                                st.success(f"✅ Generated via {d_src}!")
+                                st.rerun()
 
                 st.divider()
 
@@ -452,21 +484,23 @@ else:
 
             with btn_ai_col:
                 if st.button("✨ (Re)Generate Draft with Gemini AI", use_container_width=True):
-                    with st.spinner(f"Drafting personalized pitch for {selected_lead_name} with Gemini..."):
-                        _load_env()
-                        lead_dict = lead_row.to_dict()
-                        if isinstance(lead_dict.get("issues"), str):
-                            lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
-                        subj, bdy, d_src = draft(lead_dict, city_input)
-                        df["subject"] = df["subject"].astype(str)
-                        df["body"] = df["body"].astype(str)
-                        df["draft_source"] = df["draft_source"].astype(str)
-                        df.loc[df["name"] == selected_lead_name, "subject"] = str(subj)
-                        df.loc[df["name"] == selected_lead_name, "body"] = str(bdy)
-                        df.loc[df["name"] == selected_lead_name, "draft_source"] = str(d_src)
-                        save_leads_df(df)
-                    st.success(f"Generated via {d_src}!")
-                    st.rerun()
+                    if not os.environ.get("GEMINI_API_KEY"):
+                        st.error("❌ GEMINI_API_KEY not found in Streamlit Secrets!")
+                    else:
+                        with st.spinner(f"Drafting personalized pitch for {selected_lead_name} with Gemini..."):
+                            lead_dict = lead_row.to_dict()
+                            if isinstance(lead_dict.get("issues"), str):
+                                lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
+                            subj, bdy, d_src = draft(lead_dict, city_input)
+                            df["subject"] = df["subject"].astype(str)
+                            df["body"] = df["body"].astype(str)
+                            df["draft_source"] = df["draft_source"].astype(str)
+                            df.loc[df["name"] == selected_lead_name, "subject"] = str(subj)
+                            df.loc[df["name"] == selected_lead_name, "body"] = str(bdy)
+                            df.loc[df["name"] == selected_lead_name, "draft_source"] = str(d_src)
+                            save_leads_df(df)
+                        st.success(f"✅ Generated via {d_src}!")
+                        st.rerun()
 
     st.divider()
     # Download CSV Button
