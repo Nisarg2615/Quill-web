@@ -375,16 +375,23 @@ else:
                                 if isinstance(lead_dict.get("issues"), str):
                                     lead_dict["issues"] = [i.strip() for i in lead_dict["issues"].split("|") if i.strip()]
                                 subj, bdy, d_src = draft(lead_dict, city_input)
-                            # Update session state df directly — instant, no disk-read race condition
                             df["subject"] = df["subject"].astype(str)
                             df["body"] = df["body"].astype(str)
                             df["draft_source"] = df["draft_source"].astype(str)
                             df.loc[df["name"] == row["name"], "subject"] = str(subj)
                             df.loc[df["name"] == row["name"], "body"] = str(bdy)
                             df.loc[df["name"] == row["name"], "draft_source"] = str(d_src)
-                            save_leads_df(df)  # saves to disk AND session_state
+                            save_leads_df(df)
                             st.success(f"✅ Generated via **{d_src}** for {row['name']}!")
                             st.rerun()
+
+                # Preview generated email right on the card if present
+                curr_subj = str(row.get("subject", "")).strip()
+                curr_body = str(row.get("body", "")).strip()
+                if curr_subj and curr_subj != "nan" and curr_body and curr_body != "nan":
+                    with st.expander(f"✉️ Preview Email: {curr_subj[:60]}..."):
+                        st.markdown(f"**Subject:** {curr_subj}")
+                        st.text_area("Draft Body:", value=curr_body, height=180, key=f"body_prev_{idx}", disabled=True)
 
                 st.divider()
 
@@ -461,18 +468,19 @@ else:
     # --- TAB 3: Email Draft Editor ---
     with tab_editor:
         st.subheader("✏️ Inspect & Edit Email Drafts Before Sending")
-        email_leads = df[df["email"].notna() & (df["email"] != "")]
-        if email_leads.empty:
-            st.info("No leads with emails available to edit.")
+        selectable_leads = df[df["name"].notna() & (df["name"] != "")]
+        if selectable_leads.empty:
+            st.info("No leads available to edit.")
         else:
-            selected_lead_name = st.selectbox("Select Business to Review Draft:", email_leads["name"].tolist())
+            selected_lead_name = st.selectbox("Select Business to Review Draft:", selectable_leads["name"].tolist())
             lead_row = df[df["name"] == selected_lead_name].iloc[0]
 
             col_info1, col_info2 = st.columns([1, 1])
             with col_info1:
                 st.write(f"**Business:** {lead_row['name']}")
-                st.write(f"**Email:** `{lead_row['email']}`")
-                st.write(f"**Draft Source:** `{lead_row.get('draft_source', 'Offline Template')}`")
+                em_val = str(lead_row.get('email', '')).strip()
+                st.write(f"**Email:** `{em_val}`" if em_val and em_val != 'nan' else "**Email:** *(No email - phone/offline pitch)*")
+                st.write(f"**Draft Source:** `{lead_row.get('draft_source', 'No draft yet')}`")
             with col_info2:
                 st.write(f"**Audited Issues:** {lead_row.get('issues', 'None')}")
                 st.write(f"**Website:** {lead_row.get('website', 'None')}")

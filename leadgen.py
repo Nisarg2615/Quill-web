@@ -378,7 +378,6 @@ def template_draft(lead, city=""):
 
 def gemini_draft(lead, city=""):
     key = os.getenv("GEMINI_API_KEY")
-    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
     if not key:
         return None
     city_name = city.split(",")[0].strip() if city else "the local area"
@@ -413,39 +412,49 @@ def gemini_draft(lead, city=""):
         f"Return ONLY valid JSON: {{\"subject\": \"...\", \"body\": \"...\"}} where body has no signature or footer."
     )
 
-    # Retry up to 3 times in case of temporary rate limits or spikes
-    for attempt in range(3):
-        try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                headers={"x-goog-api-key": key}, timeout=60,
-                json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"responseMimeType": "application/json"}})
-            if r.status_code == 200:
-                raw_text = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                # Robustly strip markdown code fences: ```json ... ``` or ``` ... ```
-                if raw_text.startswith("```"):
-                    # Remove the opening fence line (e.g. ```json\n or ```\n)
-                    raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
-                    # Remove the closing fence
-                    if raw_text.rstrip().endswith("```"):
-                        raw_text = raw_text.rstrip()[:-3]
-                raw_text = raw_text.strip()
-                data = json.loads(raw_text)
-                return data["subject"], data["body"].strip() + footer()
-            elif r.status_code in (429, 503):
-                time.sleep(3 * (attempt + 1))
-                continue
-            else:
-                print(f"  [Gemini] HTTP {r.status_code}: {r.text[:200]}")
+    # Models list with smart fallback in case one hits the 20 req/day free tier quota
+    custom_model = os.getenv("GEMINI_MODEL")
+    candidate_models = []
+    if custom_model:
+        candidate_models.append(custom_model)
+    for m in ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.8-flash"]:
+        if m not in candidate_models:
+            candidate_models.append(m)
+
+    for model in candidate_models:
+        for attempt in range(2):
+            try:
+                r = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    headers={"x-goog-api-key": key}, timeout=30,
+                    json={"contents": [{"parts": [{"text": prompt}]}],
+                          "generationConfig": {"responseMimeType": "application/json"}})
+                if r.status_code == 200:
+                    raw_text = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    # Robustly strip markdown code fences: ```json ... ``` or ``` ... ```
+                    if raw_text.startswith("```"):
+                        raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
+                        if raw_text.rstrip().endswith("```"):
+                            raw_text = raw_text.rstrip()[:-3]
+                    raw_text = raw_text.strip()
+                    data = json.loads(raw_text)
+                    return data["subject"], data["body"].strip() + footer()
+                elif r.status_code == 429:
+                    print(f"  [Gemini] Model '{model}' quota reached (429), trying next candidate...")
+                    break  # break inner attempt loop to try next model immediately
+                elif r.status_code == 503:
+                    time.sleep(2)
+                    continue
+                else:
+                    print(f"  [Gemini] Model '{model}' HTTP {r.status_code}: {r.text[:150]}")
+                    break
+            except json.JSONDecodeError as e:
+                print(f"  [Gemini] JSON parse error: {e}")
                 break
-        except json.JSONDecodeError as e:
-            print(f"  [Gemini] JSON parse error (attempt {attempt+1}): {e} | raw: {raw_text[:100]}")
-            break
-        except Exception as e:
-            print(f"  [Gemini] Exception (attempt {attempt+1}): {e}")
-            time.sleep(2)
-            continue
+            except Exception as e:
+                print(f"  [Gemini] Exception on {model}: {e}")
+                time.sleep(1)
+                continue
     return None
 
 
