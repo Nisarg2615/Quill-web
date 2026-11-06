@@ -86,15 +86,89 @@ def is_suppressed(email, sup):
 
 def sent_today(state):
     today = dt.date.today().isoformat()
-    return sum(1 for e in state.values() for t in e["sent_times"] if t.startswith(today))
+    return sum(1 for e in state.values() for t in e.get("sent_times", []) if t.startswith(today))
 
 
-def effective_cap(state, daily_cap):
-    times = [t for e in state.values() for t in e["sent_times"]]
+def get_campaign_start_date(state):
+    times = [t for e in state.values() for t in e.get("sent_times", [])]
     if not times:
-        return min(daily_cap, 5)
-    days = (dt.date.today() - dt.date.fromisoformat(min(times)[:10])).days
-    return min(daily_cap, 5 + 3 * days)
+        return dt.date.today()
+    return dt.date.fromisoformat(min(times)[:10])
+
+
+def effective_cap(state, daily_cap=30, ramp_step=5, initial_cap=5):
+    """
+    Ramps daily email sending volume day-wise by +5 every day (e.g. Day 1: 5, Day 2: 10, Day 3: 15...)
+    up to the configured maximum daily_cap.
+    """
+    times = [t for e in state.values() for t in e.get("sent_times", [])]
+    if not times:
+        return min(daily_cap, initial_cap)
+    start_date = dt.date.fromisoformat(min(times)[:10])
+    days = (dt.date.today() - start_date).days
+    return min(daily_cap, initial_cap + ramp_step * max(days, 0))
+
+
+def get_outreach_calendar(state, daily_cap=30, ramp_step=5, initial_cap=5, lookback_days=7, lookahead_days=7):
+    """
+    Builds a day-wise calendar tracking sending history, daily target caps (increasing by 5/day),
+    and scheduled future quotas.
+    """
+    times = [t for e in state.values() for t in e.get("sent_times", [])]
+    today = dt.date.today()
+    start_date = dt.date.fromisoformat(min(times)[:10]) if times else today
+
+    # Map sent emails by date string YYYY-MM-DD
+    sent_by_date = {}
+    for email, e in state.items():
+        for t in e.get("sent_times", []):
+            d_str = t[:10]
+            if d_str not in sent_by_date:
+                sent_by_date[d_str] = []
+            sent_by_date[d_str].append({
+                "email": email,
+                "name": e.get("name", "Unknown"),
+                "subject": e.get("subject", ""),
+                "stage": e.get("stage", 0),
+                "time": t[11:19] if len(t) >= 19 else "",
+                "status": e.get("status", "sent"),
+            })
+
+    first_day = min(start_date, today - dt.timedelta(days=lookback_days))
+    last_day = today + dt.timedelta(days=lookahead_days)
+    calendar_days = []
+    curr = first_day
+
+    while curr <= last_day:
+        d_str = curr.isoformat()
+        day_diff = (curr - start_date).days
+        target_cap = min(daily_cap, initial_cap + ramp_step * max(day_diff, 0)) if day_diff >= 0 else initial_cap
+
+        actual_sent = sent_by_date.get(d_str, [])
+        sent_count = len(actual_sent)
+
+        if curr < today:
+            status_label = f"Completed ({sent_count}/{target_cap})" if sent_count >= target_cap else (f"Sent {sent_count}/{target_cap}" if sent_count > 0 else "No sends")
+        elif curr == today:
+            status_label = f"Today ({sent_count}/{target_cap} sent - {max(target_cap - sent_count, 0)} available)"
+        else:
+            status_label = f"Planned (Cap: {target_cap})"
+
+        calendar_days.append({
+            "date": curr,
+            "date_str": d_str,
+            "day_num": day_diff + 1 if day_diff >= 0 else None,
+            "target_cap": target_cap,
+            "sent_count": sent_count,
+            "status": status_label,
+            "is_today": curr == today,
+            "is_past": curr < today,
+            "is_future": curr > today,
+            "recipients": actual_sent,
+        })
+        curr += dt.timedelta(days=1)
+
+    return calendar_days
 
 
 # ---------------------------------------------------------------------- compose

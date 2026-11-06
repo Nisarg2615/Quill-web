@@ -1,6 +1,7 @@
 import os
 import csv
 import time
+import datetime as dt
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 import streamlit as st
@@ -143,9 +144,11 @@ with st.sidebar:
     sender_state = sender.load_state()
     sent_today_count = sender.sent_today(sender_state)
     eff_cap = sender.effective_cap(sender_state, 30)
-    st.metric("Sent Today", f"{sent_today_count} / {eff_cap}")
+    start_d = sender.get_campaign_start_date(sender_state)
+    campaign_day = max((dt.date.today() - start_d).days + 1, 1) if sender_state else 1
+    st.metric("Sent Today", f"{sent_today_count} / {eff_cap}", delta=f"Day {campaign_day} (+5/day ramp)")
     st.metric("Total Contacted", len(sender_state))
-    st.caption("Powered by Gmail Direct SMTP")
+    st.caption("Daily cap auto-ramps by +5 emails every day")
 
     st.divider()
     # ── Live API key status indicator ──
@@ -292,7 +295,12 @@ else:
     st.divider()
 
     # Tabs for Organized Navigation
-    tab_leads, tab_outreach, tab_editor = st.tabs(["📋 Filter & Explore Leads", "🚀 Outreach & Sending", "✏️ Email Draft Editor"])
+    tab_leads, tab_outreach, tab_calendar, tab_editor = st.tabs([
+        "📋 Filter & Explore Leads",
+        "🚀 Outreach & Sending",
+        "📅 Outreach Calendar & Schedule (+5/day)",
+        "✏️ Email Draft Editor"
+    ])
 
     # --- TAB 1: Filter & Explore Leads ---
     with tab_leads:
@@ -466,7 +474,83 @@ else:
                 st.success("Inbox sync complete! State and suppression lists updated.")
                 st.rerun()
 
-    # --- TAB 3: Email Draft Editor ---
+    # --- TAB 3: Outreach Calendar & Schedule (+5/day ramp) ---
+    with tab_calendar:
+        st.subheader("📅 Day-Wise Outreach Calendar & Sending Status")
+        st.markdown(
+            "Track daily email volumes, historical outreach logs, and the automatic **+5 emails/day** safe-ramping schedule."
+        )
+
+        cal_state = sender.load_state()
+        start_d = sender.get_campaign_start_date(cal_state)
+        today_date = dt.date.today()
+        campaign_day_num = max((today_date - start_d).days + 1, 1) if cal_state else 1
+        today_target_cap = sender.effective_cap(cal_state, 30)
+        sent_today_val = sender.sent_today(cal_state)
+        remaining_sends = max(today_target_cap - sent_today_val, 0)
+
+        c_stat1, c_stat2, c_stat3, c_stat4 = st.columns(4)
+        c_stat1.metric("Campaign Day", f"Day {campaign_day_num}", help=f"Campaign started on {start_d.isoformat()}")
+        c_stat2.metric("Today's Target Cap", f"{today_target_cap} emails", delta="+5 from yesterday")
+        c_stat3.metric("Sent Today", f"{sent_today_val} / {today_target_cap}", delta=f"{remaining_sends} available")
+        c_stat4.metric("Total Contacted", len(cal_state), help="Unique businesses emailed")
+
+        st.divider()
+
+        # Day-by-day table
+        st.write("### 📈 14-Day Outreach Schedule & Status")
+        cal_days = sender.get_outreach_calendar(cal_state, daily_cap=30, ramp_step=5, lookback_days=4, lookahead_days=9)
+        table_rows = []
+        for d in cal_days:
+            prefix = "👉 (TODAY) " if d["is_today"] else ""
+            table_rows.append({
+                "Date": prefix + d["date_str"],
+                "Campaign Day": f"Day {d['day_num']}" if d.get("day_num") else "—",
+                "Daily Target Cap": f"{d['target_cap']} emails",
+                "Sent Volume": d["sent_count"],
+                "Status": d["status"],
+            })
+        st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+
+        # Bar chart showing Target Cap vs Actual Sent
+        chart_df = pd.DataFrame({
+            "Date": [d["date_str"][5:] for d in cal_days],
+            "Sent": [d["sent_count"] for d in cal_days],
+            "Target Cap": [d["target_cap"] for d in cal_days],
+        }).set_index("Date")
+        st.bar_chart(chart_df)
+
+        st.divider()
+
+        # Interactive Day Inspector
+        st.write("### 🔍 Inspect Contacts by Date")
+        all_dates = sorted(list({t[:10] for e in cal_state.values() for t in e.get("sent_times", [])}), reverse=True)
+        if not all_dates:
+            all_dates = [today_date.isoformat()]
+        elif today_date.isoformat() not in all_dates:
+            all_dates.insert(0, today_date.isoformat())
+
+        chosen_date = st.selectbox("Select Date to View Activity:", all_dates, index=0)
+        day_contacts = []
+        for em, e in cal_state.items():
+            for t in e.get("sent_times", []):
+                if t.startswith(chosen_date):
+                    day_contacts.append({
+                        "Time": t[11:19] if len(t) >= 19 else t[11:16],
+                        "Business Name": e.get("name", "Unknown"),
+                        "Email Address": em,
+                        "Subject Line": e.get("subject", ""),
+                        "Stage": "Initial (Stage 0)" if e.get("stage", 0) == 0 else f"Follow-up {e.get('stage')}",
+                        "Status": e.get("status", "sent"),
+                    })
+
+        if day_contacts:
+            st.success(f"Found {len(day_contacts)} emails sent on {chosen_date}:")
+            st.dataframe(pd.DataFrame(day_contacts), use_container_width=True, hide_index=True)
+        else:
+            st.info(f"No emails recorded for {chosen_date}. Today's capacity allows sending up to {today_target_cap} emails!")
+
+    # --- TAB 4: Email Draft Editor ---
     with tab_editor:
         st.subheader("✏️ Inspect & Edit Email Drafts Before Sending")
         selectable_leads = df[df["name"].notna() & (df["name"] != "")]
